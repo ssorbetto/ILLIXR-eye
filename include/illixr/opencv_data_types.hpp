@@ -17,6 +17,30 @@ struct cam_type : switchboard::event {
         , img1{std::move(_img1)} { }
 };
 
+// struct eye_type : switchboard::event {
+//     time_point time;
+//     cv::Mat    img0;
+//     cv::Mat    img1;
+
+//     eye_type(time_point _time, cv::Mat _img0, cv::Mat _img1)
+//         : time{_time}
+//         , img0{std::move(_img0)}
+//         , img1{std::move(_img1)} { }
+// };
+
+struct eye_type : switchboard::event {
+    time_point time;
+    cv::Mat    img0;
+    cv::Mat    img1;
+    std::vector<double> center;
+
+    eye_type(time_point _time, cv::Mat _img0, cv::Mat _img1, std::vector<double> _center)
+        : time{_time}
+        , img0{std::move(_img0)}
+        , img1{std::move(_img1)}
+        , center{_center{ }} { }
+};
+
 struct rgb_depth_type : public switchboard::event {
     [[maybe_unused]] time_point time;
     cv::Mat                     rgb;

@@ -65,7 +65,8 @@ public:
         , _m_slow_pose{sb->get_reader<pose_type>("slow_pose")}
         , _m_fast_pose{sb->get_reader<imu_raw_type>("imu_raw")} //, glfw_context{pb->lookup_impl<global_config>()->glfw_context}
         , _m_rgb_depth(sb->get_reader<rgb_depth_type>("rgb_depth"))
-        , _m_cam{sb->get_buffered_reader<cam_type>("cam")} {
+        , _m_cam{sb->get_buffered_reader<cam_type>("cam")}
+        , _m_eye{sb->get_buffered_reader<eye_type>("eye")} {
         spdlogger(std::getenv("DEBUGVIEW_LOG_LEVEL"));
     }
 
@@ -132,6 +133,17 @@ public:
             ImGui::TextColored(ImVec4(1.0, 0.0, 0.0, 1.0), "Invalid predicted pose pointer");
         }
 
+        //todo:
+        ImGui::Text("Eye topic debug:");
+        ImGui::SameLine();
+        switchboard::ptr<const eye_type> raw_eye  = _m_eye.size() == 0 ? nullptr : _m_eye.dequeue();
+        if (raw_eye != nullptr) {
+            cv::Mat img0{raw_eye->img0.clone()};
+            ImGui::TextColored(ImVec4(0.0, 1.0, 0.0, 1.0), "Valid eye pointer");
+            ImGui::Text("Eye0 image size: (%d, %d)", img0.cols, img0.rows);
+            ImGui::Text("Eye0 Center: (%d, %d)", raw_eye->center[0], raw_eye->center[1]);
+        }
+
         ImGui::Text("Fast pose topic:");
         ImGui::SameLine();
 
@@ -192,6 +204,15 @@ public:
                     camera_texture_sizes[0].y(), camera_textures[0]);
         ImGui::Text("	Camera1: (%d, %d) \n		GL texture handle: %d", camera_texture_sizes[1].x(),
                     camera_texture_sizes[1].y(), camera_textures[1]);
+        ImGui::Text("lucy testing ");
+        ImGui::End();
+        // todo: set position
+        ImGui::Begin("Eye");
+        ImGui::Text("Eye view buffers: ");
+        ImGui::Text("  Eye0: (%d, %d) \n    GL texture handle: %d", eye_texture_sizes[0].x(),
+                    eye_texture_sizes[0].y(), eye_textures[0]);
+        ImGui::Text("  Eye1: (%d, %d) \n    GL texture handle: %d", eye_texture_sizes[1].x(),
+                    eye_texture_sizes[1].y(), eye_textures[1]);
         ImGui::End();
 
         if (use_cam) {
@@ -207,13 +228,35 @@ public:
             ImGui::End();
         }
 
+        // todo: attempt to display eye images
+        if (use_eye) {
+            ImGui::SetNextWindowSize(ImVec2(700, 350), ImGuiCond_Once);
+            // move display windows up ?
+            if (use_cam)
+                ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - 350),
+                                        ImGuiCond_Once, ImVec2(1.0f, 1.0f));
+            else
+                ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y), ImGuiCond_Once,
+                                    ImVec2(1.0f, 1.0f));
+            ImGui::Begin("Onboard eye camera views");
+            auto windowSize     = ImGui::GetWindowSize();
+            auto verticalOffset = ImGui::GetCursorPos().y;
+            ImGui::Image((void*) (intptr_t) eye_textures[0], ImVec2(windowSize.x / 2, windowSize.y - verticalOffset * 2));
+            ImGui::SameLine();
+            ImGui::Image((void*) (intptr_t) eye_textures[1], ImVec2(windowSize.x / 2, windowSize.y - verticalOffset * 2));
+            ImGui::End();
+        }
+
         if (use_rgbd) {
             ImGui::SetNextWindowSize(ImVec2(700, 350), ImGuiCond_Once);
 
             // if there are RGBD stream and Stereo images stream, than move the RGBD display window up
             // eseentially making the display images of RGBD on top of stereo
-            if (use_cam)
-                ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - 350),
+            if (use_cam && use_eye)
+                ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - 700), // unsure about subtraction
+                                        ImGuiCond_Once, ImVec2(1.0f, 1.0f));
+            else if (use_cam || use_eye)
+                ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y - 350), // todo: unsure
                                         ImGuiCond_Once, ImVec2(1.0f, 1.0f));
             else
                 ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y), ImGuiCond_Once,
@@ -258,6 +301,35 @@ public:
         glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask1);
 
         RAC_ERRNO_MSG("debugview at end of load_camera_images");
+        return true;
+    }
+
+    bool load_eye_images() {
+        RAC_ERRNO_MSG("debugview at start of load_eye_images");
+
+        eye = _m_eye.size() == 0 ? nullptr : _m_eye.dequeue();
+        if (eye == nullptr) {
+            return false;
+        }
+
+        if (!use_eye)
+            use_eye = true;
+
+        glBindTexture(GL_TEXTURE_2D, eye_textures[0]);
+        cv::Mat img0{eye->img0.clone()};
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, img0.cols, img0.rows, 0, GL_RED, GL_UNSIGNED_BYTE, img0.ptr());
+        eye_texture_sizes[0] = Eigen::Vector2i(img0.cols, img0.rows);
+        GLint swizzleMask[]     = {GL_RED, GL_RED, GL_RED, GL_RED};
+        glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
+
+        glBindTexture(GL_TEXTURE_2D, eye_textures[1]);
+        cv::Mat img1{eye->img1.clone()}; /// <- Adding this here to simulate the copy
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, img1.cols, img1.rows, 0, GL_RED, GL_UNSIGNED_BYTE, img1.ptr());
+        eye_texture_sizes[1] = Eigen::Vector2i(img1.cols, img1.rows);
+        GLint swizzleMask1[]    = {GL_RED, GL_RED, GL_RED, GL_RED};
+        glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask1);
+
+        RAC_ERRNO_MSG("debugview at end of load_eye_images");
         return true;
     }
 
@@ -340,6 +412,7 @@ public:
         mouse_velocity = mouse_velocity * 0.95;
 
         load_camera_images();
+        load_eye_images();
         load_rgb_depth();
 
         glUseProgram(demoShaderProgram);
@@ -425,6 +498,7 @@ private:
     switchboard::reader<imu_raw_type>      _m_fast_pose;
     switchboard::reader<rgb_depth_type>    _m_rgb_depth;
     switchboard::buffered_reader<cam_type> _m_cam;
+    switchboard::buffered_reader<eye_type> _m_eye;
     GLFWwindow*                            gui_window{};
 
     uint8_t test_pattern[TEST_PATTERN_WIDTH][TEST_PATTERN_HEIGHT]{};
@@ -441,12 +515,16 @@ private:
     Eigen::Vector3f tracking_position_offset = Eigen::Vector3f{0.0f, 0.0f, 0.0f};
 
     switchboard::ptr<const cam_type>       cam;
+    switchboard::ptr<const eye_type>       eye; //todo
     switchboard::ptr<const rgb_depth_type> rgbd;
     bool                                   use_cam  = false;
+    bool                                   use_eye  = false;
     bool                                   use_rgbd = false;
     // std::vector<std::optional<cv::Mat>> camera_data = {std::nullopt, std::nullopt};
     GLuint          camera_textures[2];
     Eigen::Vector2i camera_texture_sizes[2] = {Eigen::Vector2i::Zero(), Eigen::Vector2i::Zero()};
+    GLuint          eye_textures[2];
+    Eigen::Vector2i  eye_texture_sizes[2] = {Eigen::Vector2i::Zero(), Eigen::Vector2i::Zero()};
     GLuint          rgbd_textures[2];
     Eigen::Vector2i rgbd_texture_sizes[2] = {Eigen::Vector2i::Zero(), Eigen::Vector2i::Zero()};
 
@@ -566,6 +644,14 @@ public:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glBindTexture(GL_TEXTURE_2D, camera_textures[1]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glGenTextures(2, &(eye_textures[0]));
+        glBindTexture(GL_TEXTURE_2D, eye_textures[0]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D, eye_textures[1]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
